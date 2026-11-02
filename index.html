@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="description" content="Num Fusion — slide tiles, fuse equal numbers, chase 2048. Free single-file HTML5 merge puzzle.">
+<title>Num Fusion · 2048 Merge</title>
+<script>
+// 平台 SDK 按域名条件加载（独立运行时完全不加载，游戏行为不变）
+(function () {
+  var host = location.hostname || "";
+  try {
+    if (host.indexOf("crazygames") !== -1) {
+      var s1 = document.createElement("script");
+      s1.src = "https://sdk.crazygames.com/crazygames-sdk-v3.js";
+      s1.onload = function () {
+        if (window.CrazyGames && window.CrazyGames.SDK) {
+          window.CrazyGames.SDK.init().then(function () {
+            try { window.CrazyGames.SDK.game.loadingStart(); } catch (e) {}
+            window.addEventListener("load", function () { try { window.CrazyGames.SDK.game.loadingStop(); } catch (e) {} });
+          }).catch(function () {});
+        }
+      };
+      document.head.appendChild(s1);
+      window.__portal = "crazygames";
+    } else if (host.indexOf("gamedistribution") !== -1 || host.indexOf("html5.gamedistribution.com") !== -1 || host.indexOf("gd.games") !== -1) {
+      var s2 = document.createElement("script");
+      s2.src = "https://sdk.gamedistribution.com/v2/main.min.js";
+      document.head.appendChild(s2);
+      window.__portal = "gamedistribution";
+    }
+  } catch (e) {}
+})();
+</script>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { height:100%; overflow:hidden; background:#0b0b16; font-family:-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif; }
+  #wrap { height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+  #hud { width:100%; max-width:480px; display:flex; justify-content:space-between; align-items:center; padding:10px 16px 4px; color:#e8e8f2; }
+  .stat { text-align:center; min-width:88px; }
+  .stat .label { font-size:11px; color:#8a8aa8; letter-spacing:1px; }
+  .stat .val { font-size:22px; font-weight:800; }
+  #title { font-size:16px; font-weight:800; letter-spacing:2px; background:linear-gradient(135deg,#7c8cff,#ffd700); -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
+  #toolbar { width:100%; max-width:480px; display:flex; justify-content:center; gap:10px; padding:6px 16px 10px; }
+  #toolbar button { background:#1c1c30; color:#bcbce0; border:1px solid #33334f; border-radius:10px; padding:7px 14px; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; }
+  #toolbar button:active { transform:scale(.96); }
+  #toolbar button:disabled { opacity:.38; cursor:default; }
+  #toolbar button.on { color:#ffd76a; border-color:#5a4d1e; }
+  canvas { display:block; border-radius:14px; touch-action:none; }
+  #overlay { position:absolute; inset:0; display:none; align-items:center; justify-content:center; background:rgba(8,8,18,.78); backdrop-filter:blur(4px); z-index:5; border-radius:14px; }
+  #panel { background:#16162a; border:1px solid #30305a; border-radius:18px; padding:26px 32px; text-align:center; color:#fff; max-width:88%; }
+  #panel h2 { font-size:24px; margin-bottom:6px; letter-spacing:1px; }
+  #panel p { color:#9a9ac0; font-size:13px; line-height:1.6; margin-bottom:10px; }
+  #panel p b { color:#ffd76a; }
+  #panel .final { font-size:34px; font-weight:900; color:#ffd76a; margin-bottom:14px; }
+  #panel button { display:block; width:100%; margin-top:8px; border:none; border-radius:12px; padding:12px 30px; font-size:15px; font-weight:700; cursor:pointer; font-family:inherit; }
+  #ovBtnA { background:linear-gradient(135deg,#5b6cff,#8a5bff); color:#fff; }
+  #ovBtnB { background:#242440; color:#bcbce0; }
+  #panel button:active { transform:scale(.97); }
+  #footer { color:#55556e; font-size:11px; padding:8px 6px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="hud">
+    <div class="stat"><div class="label">SCORE</div><div class="val" id="score">0</div></div>
+    <div id="title">NUM FUSION</div>
+    <div class="stat"><div class="label">BEST</div><div class="val" id="best">0</div></div>
+  </div>
+  <div id="toolbar">
+    <button id="undoBtn" disabled>Undo · 3</button>
+    <button id="newBtn">New Game</button>
+    <button id="muteBtn" class="on">Sound On</button>
+  </div>
+  <div style="position:relative">
+    <canvas id="game"></canvas>
+    <div id="overlay"><div id="panel">
+      <h2 id="ovTitle">Num Fusion</h2>
+      <p id="ovText">Slide the tiles. Equal numbers fuse and double. Reach <b>2048</b> to win!</p>
+      <div class="final" id="finalScore" style="display:none">0</div>
+      <button id="ovBtnA">Play</button>
+      <button id="ovBtnB" style="display:none">New Game</button>
+    </div></div>
+  </div>
+  <div id="footer">Num Fusion — a free sliding number puzzle</div>
+</div>
+<script>
+"use strict";
+/*__NF_CORE__*/
+// ============================================================================
+// 纯逻辑核心（浏览器与 node 单测共用；本段禁止引用任何 DOM / Canvas / Audio）
+// 记号：棋盘为 4x4 二维数组 grid[r][c]，0 表示空格。dir：0=左 1=右 2=上 3=下。
+// 合并语义与经典 2048 完全一致：
+//   1) 所有非空块朝滑动方向依次压紧；
+//   2) 压紧顺序中相邻的同数块合并翻倍，且每块每次滑动最多合并一次；
+//   3) 合并产物视为“新块”，不会与后续块在同一滑动中连锁合并；
+//   4) 每次成功移动后随机生成一个新块：90% 为 2，10% 为 4。
+// ============================================================================
+var NF_SIZE = 4;
+
+// 单行滑动合并：line 为整行值（含 0），朝索引 0 方向滑动。
+// 返回 { out: 补齐后的整行, gained: 本次合并得分之和, moved: 是否发生位移 }
+function NF_slideLine(line) {
+  var vals = [], i;
+  for (i = 0; i < line.length; i++) if (line[i] !== 0) vals.push(line[i]);
+  var out = [], gained = 0;
+  i = 0;
+  while (i < vals.length) {
+    if (i + 1 < vals.length && vals[i] === vals[i + 1]) {
+      var nv = vals[i] * 2;      // 相邻同数 → 合并翻倍，跳过下一块（保证每块只合并一次）
+      out.push(nv);
+      gained += nv;
+      i += 2;
+    } else {
+      out.push(vals[i]);         // 不同数 → 原样保留（合并产物不连锁）
+      i += 1;
+    }
+  }
+  while (out.length < line.length) out.push(0);
+  var moved = false;
+  for (i = 0; i < line.length; i++) if (out[i] !== line[i]) { moved = true; break; }
+  return { out: out, gained: gained, moved: moved };
+}
+
+// 整盘移动：对每一行/列按方向抽取后调用 NF_slideLine。
+// 任何一行都没有位移则整步无效，返回 null。
+function NF_moveGrid(g, dir) {
+  var out = [], gained = 0, moved = false, i, r, c, line, res;
+  for (i = 0; i < NF_SIZE; i++) out.push([0, 0, 0, 0]);
+  for (i = 0; i < NF_SIZE; i++) {
+    if (dir === 0) {            // 左：行顺序即移动方向
+      line = [g[i][0], g[i][1], g[i][2], g[i][3]];
+      res = NF_slideLine(line);
+      for (c = 0; c < NF_SIZE; c++) out[i][c] = res.out[c];
+    } else if (dir === 1) {     // 右：反转行 → 滑动 → 反转回来
+      line = [g[i][3], g[i][2], g[i][1], g[i][0]];
+      res = NF_slideLine(line);
+      for (c = 0; c < NF_SIZE; c++) out[i][NF_SIZE - 1 - c] = res.out[c];
+    } else if (dir === 2) {     // 上：列自上而下
+      line = [g[0][i], g[1][i], g[2][i], g[3][i]];
+      res = NF_slideLine(line);
+      for (r = 0; r < NF_SIZE; r++) out[r][i] = res.out[r];
+    } else {                    // 下：列自下而上
+      line = [g[3][i], g[2][i], g[1][i], g[0][i]];
+      res = NF_slideLine(line);
+      for (r = 0; r < NF_SIZE; r++) out[NF_SIZE - 1 - r][i] = res.out[r];
+    }
+    gained += res.gained;
+    if (res.moved) moved = true;
+  }
+  if (!moved) return null;
+  return { grid: out, gained: gained };
+}
+
+// 是否存在合法移动：有空格，或任意相邻同数
+function NF_canMove(g) {
+  for (var r = 0; r < NF_SIZE; r++) for (var c = 0; c < NF_SIZE; c++) {
+    var v = g[r][c];
+    if (v === 0) return true;
+    if (c + 1 < NF_SIZE && g[r][c + 1] === v) return true;
+    if (r + 1 < NF_SIZE && g[r + 1][c] === v) return true;
+  }
+  return false;
+}
+
+// 随机生成一个新块（90% 为 2，10% 为 4）：写入随机空格，返回新盘；不改动原盘；无空格返回 null
+function NF_spawn(g) {
+  var empties = [], r, c;
+  for (r = 0; r < NF_SIZE; r++) for (c = 0; c < NF_SIZE; c++) if (g[r][c] === 0) empties.push([r, c]);
+  if (!empties.length) return null;
+  var p = empties[Math.floor(Math.random() * empties.length)];
+  var ng = [];
+  for (r = 0; r < NF_SIZE; r++) ng.push(g[r].slice());
+  ng[p[0]][p[1]] = Math.random() < 0.9 ? 2 : 4;
+  return ng;
+}
+
+// 全盘最大块
+function NF_maxTile(g) {
+  var m = 0;
+  for (var r = 0; r < NF_SIZE; r++) for (var c = 0; c < NF_SIZE; c++) if (g[r][c] > m) m = g[r][c];
+  return m;
+}
+
+// 供 node 单测导出；浏览器环境自动跳过
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = {
+    NF_SIZE: NF_SIZE, NF_slideLine: NF_slideLine, NF_moveGrid: NF_moveGrid,
+    NF_canMove: NF_canMove, NF_spawn: NF_spawn, NF_maxTile: NF_maxTile
+  };
+}
+/*__NF_CORE_END__*/
+
+// ============================================================================
+// 渲染与交互层（Canvas 程序化图形 + WebAudio 合成音效，零外部资源）
+// ============================================================================
+var W = 480, H = 560;
+var canvas = document.getElementById("game");
+var ctx = canvas.getContext("2d");
+var dpr = Math.min(window.devicePixelRatio || 1, 2);
+canvas.width = W * dpr;
+canvas.height = H * dpr;
+canvas.style.width = "100%";
+canvas.style.maxWidth = W + "px";
+ctx.scale(dpr, dpr);
+
+var PAD = 16, GAP = 12;
+var CELL = (W - PAD * 2 - GAP * 3) / 4;   // 103px
+var OX = PAD, OY = 14;
+var ANIM_MS = 150;                        // 滑动/合并补间时长（ease-out）
+
+function cellX(c) { return OX + c * (CELL + GAP); }
+function cellY(r) { return OY + r * (CELL + GAP); }
+function $(id) { return document.getElementById(id); }
+
+// ------------------------------ 游戏状态 ------------------------------
+var nextId = 1;
+var grid = [];            // grid[r][c] = tile | null；tile = {id,v,r,c,x,y,pop,born}
+var state = "START";      // START | PLAY | ANIM | WON | OVER
+var score = 0, best = 0;
+var undoStack = [];       // 撤销快照栈（最多保留 3 条）
+var undosLeft = 3;        // 每局限 3 次撤销
+var nextWin = 2048;       // 下一个胜利里程碑（达成后翻倍：4096 / 8192 ...）
+var muted = false;
+var playing = false;      // 本局是否已上报 gameplayStart
+var anim = null;          // 进行中的滑动动画 { t0, slides, merges, result, spawnCell, spawnVal }
+var particles = [], floats = [];
+var shakeT = 0;           // 无效移动的棋盘抖动
+
+try { best = parseInt(localStorage.getItem("nf_best") || "0", 10) || 0; } catch (e) {}
+try { muted = localStorage.getItem("nf_muted") === "1"; } catch (e) {}
+
+// 块配色阶梯：2 → 2048 由冷色渐入金色，数字越大字号越小
+var TILE_COLORS = {
+  2:    ["#7c8cff", "#ffffff"],
+  4:    ["#5fb2ff", "#ffffff"],
+  8:    ["#2fc0e8", "#063344"],
+  16:   ["#2fd8b4", "#06342a"],
+  32:   ["#54d97e", "#0b3a1e"],
+  64:   ["#b6e04e", "#333a06"],
+  128:  ["#f6d94a", "#4a3a00"],
+  256:  ["#ffc44d", "#4a2e00"],
+  512:  ["#ffa64d", "#4a2500"],
+  1024: ["#ffbe3d", "#4a2500"],
+  2048: ["#ffd700", "#4a3500"],
+  4096: ["#ffe98a", "#4a3500"]
+};
+function tileStyle(v) {
+  if (TILE_COLORS[v]) return TILE_COLORS[v];
+  if (v > 4096) return ["#ffffff", "#3a3a3a"];
+  return ["#7c8cff", "#ffffff"];
+}
+function shade(hex, amt) {
+  var n = parseInt(hex.slice(1), 16);
+  var r = Math.max(0, Math.min(255, (n >> 16) + Math.round(255 * amt)));
+  var g = Math.max(0, Math.min(255, ((n >> 8) & 255) + Math.round(255 * amt)));
+  var b = Math.max(0, Math.min(255, (n & 255) + Math.round(255 * amt)));
+  return "rgb(" + r + "," + g + "," + b + ")";
+}
+function roundRect(c, x, y, w, h, rad) {
+  c.beginPath();
+  c.moveTo(x + rad, y);
+  c.arcTo(x + w, y, x + w, y + h, rad);
+  c.arcTo(x + w, y + h, x, y + h, rad);
+  c.arcTo(x, y + h, x, y, rad);
+  c.arcTo(x, y, x + w, y, rad);
+  c.closePath();
+}
+function valuesGrid(tiles) {
+  var g = [];
+  for (var r = 0; r < 4; r++) {
+    var row = [];
+    for (var c = 0; c < 4; c++) row.push(tiles[r][c] ? tiles[r][c].v : 0);
+    g.push(row);
+  }
+  return g;
+}
+function makeTile(v, r, c) {
+  return { id: nextId++, v: v, r: r, c: c, x: cellX(c), y: cellY(r), pop: 0, born: 0 };
+}
+
+// ------------------------------ 音效（WebAudio 合成） ------------------------------
+var actx = null;
+function unlockAudio() {
+  try {
+    if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+    if (actx.state === "suspended") actx.resume();
+  } catch (e) {}
+}
+function beep(freq, dur, type, gainv) {
+  if (muted) return;
+  try {
+    if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+    if (actx.state === "suspended") actx.resume();
+    var o = actx.createOscillator(), g = actx.createGain();
+    o.type = type || "sine";
+    o.frequency.value = freq;
+    g.gain.setValueAtTime(gainv || 0.1, actx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + dur);
+    o.connect(g); g.connect(actx.destination);
+    o.start(); o.stop(actx.currentTime + dur);
+  } catch (e) {}
+}
+function sfxSlide()            { beep(170, 0.06, "triangle", 0.06); }
+function sfxMerge(v)           { beep(280 + Math.log2(v) * 55, 0.12, "triangle", 0.11); }
+function sfxInvalid()          { beep(130, 0.05, "square", 0.04); }
+function sfxUndo()             { beep(300, 0.07, "sine", 0.06); setTimeout(function () { beep(220, 0.08, "sine", 0.06); }, 70); }
+function sfxWin()              { [523, 659, 784, 1047].forEach(function (f, i) { setTimeout(function () { beep(f, 0.18, "triangle", 0.12); }, i * 110); }); }
+function sfxOver()             { beep(220, 0.25, "sawtooth", 0.07); setTimeout(function () { beep(150, 0.4, "sawtooth", 0.07); }, 160); }
+
+// ------------------------------ 平台埋点（域名守卫已在 loader 完成） ------------------------------
+function platformStart() {
+  if (playing) return;
+  playing = true;
+  try {
+    if (window.__portal === "crazygames" && window.CrazyGames && window.CrazyGames.SDK) {
+      window.CrazyGames.SDK.game.gameplayStart();
+    }
+  } catch (e) {}
+}
+function platformStop() {
+  if (!playing) return;
+  playing = false;
+  try {
+    if (window.__portal === "crazygames" && window.CrazyGames && window.CrazyGames.SDK) {
+      window.CrazyGames.SDK.game.gameplayStop();
+    }
+  } catch (e) {}
+}
+
+// ------------------------------ UI ------------------------------
+function updateHud() {
+  $("score").textContent = score;
+  $("best").textContent = best;
+  var ub = $("undoBtn");
+  ub.textContent = "Undo · " + undosLeft;
+  ub.disabled = !(state === "PLAY" && undosLeft > 0 && undoStack.length > 0);
+  $("muteBtn").textContent = muted ? "Sound Off" : "Sound On";
+  $("muteBtn").className = muted ? "" : "on";
+}
+function showOverlay(mode, goal) {
+  var t = $("ovTitle"), p = $("ovText"), fs = $("finalScore"), a = $("ovBtnA"), b = $("ovBtnB");
+  if (mode === "start") {
+    t.textContent = "Num Fusion";
+    p.innerHTML = "Slide the tiles with arrows, WASD or a swipe.<br>Equal numbers fuse and double.<br>Reach <b>2048</b> to win — then chase 4096!";
+    fs.style.display = "none";
+    a.textContent = "Play";
+    b.style.display = "none";
+  } else if (mode === "over") {
+    t.textContent = "Game Over";
+    p.textContent = "No moves left — the grid is jammed.";
+    fs.style.display = "block";
+    fs.textContent = score;
+    a.textContent = "Try Again";
+    b.style.display = "none";
+  } else { // win：达成里程碑 goal
+    t.textContent = "You Win!";
+    p.textContent = "You fused the " + goal + " tile! Keep going for " + (goal * 2) + "?";
+    fs.style.display = "block";
+    fs.textContent = score;
+    a.textContent = "Keep Playing";
+    b.style.display = "block";
+  }
+  $("overlay").style.display = "flex";
+}
+function hideOverlay() { $("overlay").style.display = "none"; }
+function addScore(n) {
+  score += n;
+  if (score > best) {
+    best = score;
+    try { localStorage.setItem("nf_best", String(best)); } catch (e) {}
+  }
+}
+
+// ------------------------------ 生成 / 新局 / 撤销 ------------------------------
+function spawnRandom() {
+  var empties = [], r, c;
+  for (r = 0; r < 4; r++) for (c = 0; c < 4; c++) if (!grid[r][c]) empties.push([r, c]);
+  if (!empties.length) return null;
+  var p = empties[Math.floor(Math.random() * empties.length)];
+  var t = makeTile(Math.random() < 0.9 ? 2 : 4, p[0], p[1]);
+  t.born = performance.now();   // 弹入动画
+  grid[p[0]][p[1]] = t;
+  return t;
+}
+function newGame() {
+  platformStop();
+  grid = [];
+  for (var r = 0; r < 4; r++) grid.push([null, null, null, null]);
+  score = 0; undoStack = []; undosLeft = 3; nextWin = 2048;
+  particles = []; floats = []; anim = null; shakeT = 0;
+  state = "PLAY";
+  spawnRandom();
+  spawnRandom();
+  hideOverlay();
+  updateHud();
+}
+function doUndo() {
+  if (state !== "PLAY" || undosLeft <= 0 || !undoStack.length) return;
+  var snap = undoStack.pop();     // 撤销上一步：恢复移动前的数值盘与分数
+  undosLeft--;
+  grid = [];
+  for (var r = 0; r < 4; r++) {
+    var row = [];
+    for (var c = 0; c < 4; c++) row.push(snap.cells[r][c] ? makeTile(snap.cells[r][c], r, c) : null);
+    grid.push(row);
+  }
+  score = snap.score;
+  particles = []; floats = []; anim = null;
+  sfxUndo();
+  updateHud();
+}
+
+// ------------------------------ 移动（滑动 + 合并 + 补间动画） ------------------------------
+// 返回是否成功开始移动。瓦片层与 NF_moveGrid 采用同一合并语义，位移合法性
+// 与得分一律以纯逻辑核心（NF_moveGrid）的判定为准。
+function tryMove(dir) {
+  if (state !== "PLAY") return false;
+  var before = valuesGrid(grid);
+  var res = NF_moveGrid(before, dir);
+  if (!res) {                    // 无法移动：抖动提示
+    shakeT = 1;
+    sfxInvalid();
+    return false;
+  }
+  undoStack.push({ cells: before, score: score });   // 撤销快照（在移动前入栈）
+  if (undoStack.length > 3) undoStack.shift();
+  platformStart();               // 首次有效操作上报 gameplayStart
+
+  // 瓦片级动画计算：逐线取出非空块（按移动顺序），与 NF_slideLine 同步推进
+  var slides = [], merges = [], result = [], r, c, i, j;
+  for (r = 0; r < 4; r++) result.push([null, null, null, null]);
+  for (i = 0; i < 4; i++) {
+    var cells = [];
+    for (j = 0; j < 4; j++) {
+      var rr, cc;
+      if (dir === 0)      { rr = i;     cc = j; }
+      else if (dir === 1) { rr = i;     cc = 3 - j; }
+      else if (dir === 2) { rr = j;     cc = i; }
+      else                { rr = 3 - j; cc = i; }
+      if (grid[rr][cc]) cells.push({ t: grid[rr][cc] });
+    }
+    var pos = 0, k = 0;
+    while (k < cells.length) {
+      var tr, tc;
+      if (dir === 0)      { tr = i;     tc = pos; }
+      else if (dir === 1) { tr = i;     tc = 3 - pos; }
+      else if (dir === 2) { tr = pos;   tc = i; }
+      else                { tr = 3 - pos; tc = i; }
+      if (k + 1 < cells.length && cells[k].t.v === cells[k + 1].t.v) {
+        // 合并：两块滑向同一格，动画结束后生成翻倍新块（带脉冲）
+        merges.push({
+          a: cells[k].t, b: cells[k + 1].t, tr: tr, tc: tc,
+          nv: cells[k].t.v * 2,
+          ax0: cells[k].t.x, ay0: cells[k].t.y,
+          bx0: cells[k + 1].t.x, by0: cells[k + 1].t.y
+        });
+        k += 2;
+      } else {
+        result[tr][tc] = cells[k].t;
+        slides.push({ t: cells[k].t, fx: cells[k].t.x, fy: cells[k].t.y, tx: cellX(tc), ty: cellY(tr) });
+        k += 1;
+      }
+      pos++;
+    }
+  }
+  // 预生成滑动落地后的随机新块（动画结束后才显示）
+  var afterSpawn = NF_spawn(res.grid);
+  var spawnCell = null, spawnVal = 0;
+  if (afterSpawn) {
+    for (r = 0; r < 4; r++) for (c = 0; c < 4; c++) {
+      if (res.grid[r][c] === 0 && afterSpawn[r][c] !== 0) { spawnCell = [r, c]; spawnVal = afterSpawn[r][c]; }
+    }
+  }
+  addScore(res.gained);
+  sfxSlide();
+  anim = { t0: performance.now(), slides: slides, merges: merges, result: result, spawnCell: spawnCell, spawnVal: spawnVal };
+  state = "ANIM";
+  updateHud();
+  return true;
+}
+
+// 补间结束：落定合并块 → 生成新块 → 判定胜利 / 结束
+function finishMove(now) {
+  grid = anim.result;
+  var m, wonGoal = 0;
+  for (m = 0; m < anim.merges.length; m++) {
+    var mg = anim.merges[m];
+    var t = makeTile(mg.nv, mg.tr, mg.tc);
+    t.pop = 1;                 // 合并脉冲缩放
+    grid[mg.tr][mg.tc] = t;
+    popFX(cellX(mg.tc) + CELL / 2, cellY(mg.tr) + CELL / 2, tileStyle(mg.nv)[0]);
+    floatText(cellX(mg.tc) + CELL / 2, cellY(mg.tr) + 10, "+" + mg.nv, "#ffd76a");
+    sfxMerge(mg.nv);
+    if (mg.nv >= nextWin) wonGoal = nextWin;
+  }
+  if (anim.spawnCell) {
+    var st = makeTile(anim.spawnVal, anim.spawnCell[0], anim.spawnCell[1]);
+    st.born = now;
+    grid[anim.spawnCell[0]][anim.spawnCell[1]] = st;
+  }
+  anim = null;
+  // 网格坐标规整（消除补间浮点误差）
+  for (var r = 0; r < 4; r++) for (var c = 0; c < 4; c++) {
+    var t2 = grid[r][c];
+    if (t2) { t2.r = r; t2.c = c; t2.x = cellX(c); t2.y = cellY(r); }
+  }
+  if (wonGoal) {               // 达成里程碑 → 胜利界面（可继续挑战翻倍目标）
+    nextWin = wonGoal * 2;
+    state = "WON";
+    updateHud();
+    showOverlay("win", wonGoal);
+    sfxWin();
+    platformStop();
+    try {
+      if (window.__portal === "crazygames" && window.CrazyGames && window.CrazyGames.SDK) {
+        window.CrazyGames.SDK.game.happytime();
+      }
+    } catch (e) {}
+    return;
+  }
+  if (!NF_canMove(valuesGrid(grid))) {   // 无法移动 → 结束
+    state = "OVER";
+    updateHud();
+    showOverlay("over");
+    sfxOver();
+    platformStop();
+    return;
+  }
+  state = "PLAY";
+  updateHud();
+}
+
+// ------------------------------ 特效 ------------------------------
+function popFX(x, y, color) {
+  for (var i = 0; i < 10; i++) {
+    var a = Math.random() * Math.PI * 2, sp = 50 + Math.random() * 120;
+    particles.push({ x: x, y: y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 40, life: 0.45, color: color, size: 2 + Math.random() * 3 });
+  }
+}
+function floatText(x, y, text, color) { floats.push({ x: x, y: y, text: text, life: 0.8, color: color || "#fff" }); }
+function drawFX(dt) {
+  var p, f;
+  for (p = particles.length - 1; p >= 0; p--) {
+    var pt = particles[p];
+    pt.life -= dt;
+    if (pt.life <= 0) { particles.splice(p, 1); continue; }
+    pt.x += pt.vx * dt; pt.y += pt.vy * dt; pt.vy += 320 * dt;
+    ctx.globalAlpha = Math.max(0, pt.life / 0.45);
+    ctx.fillStyle = pt.color;
+    ctx.fillRect(pt.x - pt.size / 2, pt.y - pt.size / 2, pt.size, pt.size);
+    ctx.globalAlpha = 1;
+  }
+  for (f = floats.length - 1; f >= 0; f--) {
+    var fl = floats[f];
+    fl.life -= dt; fl.y -= 42 * dt;
+    if (fl.life <= 0) { floats.splice(f, 1); continue; }
+    ctx.globalAlpha = Math.min(1, fl.life / 0.35);
+    ctx.fillStyle = fl.color;
+    ctx.font = "800 16px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(fl.text, fl.x, fl.y);
+    ctx.globalAlpha = 1;
+  }
+}
+
+// ------------------------------ 渲染 ------------------------------
+function drawTile(x, y, v, scale) {
+  var st = tileStyle(v);
+  var s = CELL * scale;
+  ctx.save();
+  ctx.translate(x + CELL / 2, y + CELL / 2);
+  if (v >= 2048) { ctx.shadowColor = "rgba(255,215,0,.8)"; ctx.shadowBlur = 18; }   // 金块辉光
+  var g = ctx.createLinearGradient(0, -CELL / 2, 0, CELL / 2);
+  g.addColorStop(0, st[0]);
+  g.addColorStop(1, shade(st[0], -0.22));
+  ctx.fillStyle = g;
+  roundRect(ctx, -s / 2 + 2, -s / 2 + 2, s - 4, s - 4, 10);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = st[1];
+  var ratio = v >= 1024 ? 0.26 : v >= 128 ? 0.33 : v >= 16 ? 0.4 : 0.46;            // 大数字缩小字号
+  ctx.font = "800 " + Math.round(CELL * ratio * scale) + "px -apple-system,'Segoe UI',sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(String(v), 0, 1);
+  ctx.restore();
+}
+function drawTileAt(tl, now, dt) {
+  var scale = 1;
+  if (tl.pop > 0) {              // 合并脉冲：1 → 0 线性衰减
+    tl.pop = Math.max(0, tl.pop - dt * 4.5);
+    scale = 1 + 0.24 * tl.pop;
+  }
+  if (tl.born) {                 // 新块弹入
+    var bk = Math.min(1, (now - tl.born) / 140);
+    scale *= 0.25 + 0.75 * (1 - Math.pow(1 - bk, 3));
+    if (bk >= 1) tl.born = 0;
+  }
+  drawTile(tl.x, tl.y, tl.v, scale);
+}
+
+var last = 0;
+function frame(t) {
+  var dt = Math.min((t - last) / 1000, 0.05);
+  last = t;
+  var bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, "#151528"); bg.addColorStop(1, "#0b0b16");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  var shook = false;
+  if (shakeT > 0) {
+    shakeT = Math.max(0, shakeT - dt * 4);
+    ctx.save();
+    ctx.translate(Math.sin(shakeT * 42) * 5 * shakeT, 0);
+    shook = true;
+  }
+
+  // 棋盘底与空格
+  ctx.fillStyle = "rgba(255,255,255,.045)";
+  roundRect(ctx, OX - 8, OY - 8, (CELL + GAP) * 4 - GAP + 16, (CELL + GAP) * 4 - GAP + 16, 16);
+  ctx.fill();
+  ctx.fillStyle = "rgba(255,255,255,.06)";
+  for (var r = 0; r < 4; r++) for (var c = 0; c < 4; c++) {
+    roundRect(ctx, cellX(c), cellY(r), CELL, CELL, 10);
+    ctx.fill();
+  }
+
+  // 滑动/合并补间推进（150ms ease-out cubic）
+  if (anim) {
+    var k = Math.min(1, (t - anim.t0) / ANIM_MS);
+    var e = 1 - Math.pow(1 - k, 3);
+    for (var i = 0; i < anim.slides.length; i++) {
+      var sl = anim.slides[i];
+      sl.t.x = sl.fx + (sl.tx - sl.fx) * e;
+      sl.t.y = sl.fy + (sl.ty - sl.fy) * e;
+    }
+    for (var j = 0; j < anim.merges.length; j++) {
+      var mg = anim.merges[j];
+      var tx = cellX(mg.tc), ty = cellY(mg.tr);
+      mg.a.x = mg.ax0 + (tx - mg.ax0) * e;
+      mg.a.y = mg.ay0 + (ty - mg.ay0) * e;
+      mg.b.x = mg.bx0 + (tx - mg.bx0) * e;
+      mg.b.y = mg.by0 + (ty - mg.by0) * e;
+    }
+    if (k >= 1) finishMove(t);
+  }
+
+  // 瓦片：动画中只画运动块，否则画网格块
+  if (anim) {
+    for (var i2 = 0; i2 < anim.slides.length; i2++) drawTileAt(anim.slides[i2].t, t, dt);
+    for (var j2 = 0; j2 < anim.merges.length; j2++) {
+      drawTileAt(anim.merges[j2].a, t, dt);
+      drawTileAt(anim.merges[j2].b, t, dt);
+    }
+  } else {
+    for (var r2 = 0; r2 < 4; r2++) for (var c2 = 0; c2 < 4; c2++) {
+      if (grid[r2][c2]) drawTileAt(grid[r2][c2], t, dt);
+    }
+  }
+
+  drawFX(dt);
+  if (shook) ctx.restore();
+
+  // 底部操作提示
+  ctx.fillStyle = "rgba(255,255,255,.35)";
+  ctx.font = "12px sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("Arrows / WASD / Swipe to move  ·  Z to undo  ·  Goal " + nextWin, W / 2, H - 20);
+
+  requestAnimationFrame(frame);
+}
+
+// ------------------------------ 输入：键盘 + 触控滑动 + 鼠标拖动 ------------------------------
+document.addEventListener("keydown", function (e) {
+  var k = e.key;
+  var ovOpen = $("overlay").style.display === "flex";
+  if (ovOpen) {                  // 界面打开时：Enter / 空格 = 主按钮
+    if (k === "Enter" || k === " ") { e.preventDefault(); $("ovBtnA").click(); }
+    return;
+  }
+  var dir = -1;
+  if (k === "ArrowLeft" || k === "a" || k === "A") dir = 0;
+  else if (k === "ArrowRight" || k === "d" || k === "D") dir = 1;
+  else if (k === "ArrowUp" || k === "w" || k === "W") dir = 2;
+  else if (k === "ArrowDown" || k === "s" || k === "S") dir = 3;
+  else if (k === "z" || k === "Z" || k === "u" || k === "U") { e.preventDefault(); doUndo(); return; }
+  if (dir < 0) return;
+  e.preventDefault();            // 防止方向键滚动页面
+  unlockAudio();
+  tryMove(dir);
+});
+
+// 触控四方向滑动（阈值 30px；preventDefault 防止与页面滚动冲突）
+var touchStart = null;
+canvas.addEventListener("touchstart", function (e) {
+  e.preventDefault();
+  unlockAudio();
+  var t = e.changedTouches[0];
+  touchStart = { x: t.clientX, y: t.clientY };
+}, { passive: false });
+canvas.addEventListener("touchmove", function (e) {
+  e.preventDefault();
+}, { passive: false });
+canvas.addEventListener("touchend", function (e) {
+  e.preventDefault();
+  if (!touchStart) return;
+  var t = e.changedTouches[0];
+  var dx = t.clientX - touchStart.x, dy = t.clientY - touchStart.y;
+  touchStart = null;
+  if (state !== "PLAY") return;
+  var ax = Math.abs(dx), ay = Math.abs(dy);
+  if (Math.max(ax, ay) < 30) return;               // 滑动阈值 30px
+  if (ax > ay) tryMove(dx > 0 ? 1 : 0);            // 右 / 左
+  else tryMove(dy > 0 ? 3 : 2);                    // 下 / 上
+}, { passive: false });
+
+// 桌面鼠标拖动（与触控同一套手势逻辑）
+var mouseDown = null;
+canvas.addEventListener("mousedown", function (e) {
+  unlockAudio();
+  mouseDown = { x: e.clientX, y: e.clientY };
+});
+window.addEventListener("mouseup", function (e) {
+  if (!mouseDown) return;
+  var dx = e.clientX - mouseDown.x, dy = e.clientY - mouseDown.y;
+  mouseDown = null;
+  if (state !== "PLAY") return;
+  var ax = Math.abs(dx), ay = Math.abs(dy);
+  if (Math.max(ax, ay) < 30) return;
+  if (ax > ay) tryMove(dx > 0 ? 1 : 0);
+  else tryMove(dy > 0 ? 3 : 2);
+});
+
+// ------------------------------ 按钮 ------------------------------
+$("undoBtn").addEventListener("click", function () { unlockAudio(); doUndo(); });
+$("newBtn").addEventListener("click", function () { unlockAudio(); newGame(); });
+$("muteBtn").addEventListener("click", function () {
+  muted = !muted;
+  try { localStorage.setItem("nf_muted", muted ? "1" : "0"); } catch (e) {}
+  updateHud();
+  if (!muted) { unlockAudio(); beep(520, 0.07, "sine", 0.07); }
+});
+$("ovBtnA").addEventListener("click", function () {
+  unlockAudio();
+  if (state === "WON") {         // 胜利界面 → Keep Playing（继续挑战翻倍目标）
+    hideOverlay();
+    state = "PLAY";
+    updateHud();
+  } else {
+    newGame();                   // Play / Try Again
+  }
+});
+$("ovBtnB").addEventListener("click", function () { unlockAudio(); newGame(); });
+
+// ------------------------------ 启动 ------------------------------
+for (var r0 = 0; r0 < 4; r0++) grid.push([null, null, null, null]);
+spawnRandom();
+spawnRandom();
+updateHud();
+showOverlay("start");
+requestAnimationFrame(frame);
+
+// 调试/测试钩子（不影响游戏逻辑）
+window.__nf = {
+  get grid() { return valuesGrid(grid); },
+  get score() { return score; },
+  get best() { return best; },
+  get state() { return state; },
+  get undosLeft() { return undosLeft; },
+  tryMove: tryMove,
+  doUndo: doUndo,
+  newGame: newGame
+};
+</script>
+</body>
+</html>
