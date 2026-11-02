@@ -5,7 +5,7 @@
 Slide the board, fuse equal numbers and chase 2048. Classic merge puzzle with
 smooth animations, undo moves and a glowing neon board. How far can you fuse?
 
-(196 characters — fits the ≤200 limit)
+(155 characters — fits the ≤200 limit)
 
 ## Details
 
